@@ -11,7 +11,6 @@ APP_TAGLINE = "Un sistema simple para decidir qué hacer este mes."
 MEM_DIR = "spring_memory"
 os.makedirs(MEM_DIR, exist_ok=True)
 
-
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -45,19 +44,6 @@ def _hex_ok(v: str) -> bool:
     return bool(re.fullmatch(r"#([A-Fa-f0-9]{6})", (v or "").strip()))
 
 
-def _make_model(api_key: str, model_name: str):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name)
-
-
-def _generate(model, prompt: str, temperature: float = 0.5, max_output_tokens: int = 3072) -> str:
-    resp = model.generate_content(
-        prompt,
-        generation_config={"temperature": temperature, "max_output_tokens": max_output_tokens},
-    )
-    return getattr(resp, "text", "") or ""
-
-
 def _save_memory(key: str, data: dict):
     path = os.path.join(MEM_DIR, f"{key}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -89,6 +75,77 @@ def _calendar_target_rows(freq: str) -> int:
     if freq == "3/semana":
         return 12
     return 25
+
+
+def _format_calendar_csv(rows: list) -> str:
+    cols = ["día", "formato", "intención", "título", "cta"]
+    out = [",".join(cols)]
+    for r in rows or []:
+        row = [
+            str(r.get("day", "")),
+            str(r.get("format", "")),
+            str(r.get("intent", "")),
+            str(r.get("title", "")),
+            str(r.get("cta", "")),
+        ]
+        row = ['"{}"'.format(x.replace('"', '""')) for x in row]
+        out.append(",".join(row))
+    return "\n".join(out)
+
+
+# -----------------------------
+# Gemini (Direct call) — robust model resolution
+# -----------------------------
+def _model_candidates(model_name: str) -> list[str]:
+    base = (model_name or "").strip()
+    if not base:
+        base = "gemini-2.5-flash"
+
+    candidates = []
+
+    def add(x: str):
+        x = (x or "").strip()
+        if x and x not in candidates:
+            candidates.append(x)
+
+    # As-is
+    add(base)
+
+    # Ensure models/ prefix
+    if not base.startswith("models/"):
+        add(f"models/{base}")
+
+    # Add -latest variants if missing
+    plain = base.replace("models/", "")
+    if "latest" not in plain:
+        add(f"{plain}-latest")
+        add(f"models/{plain}-latest")
+
+    # If user already gave -latest, still try the plain too
+    if plain.endswith("-latest"):
+        add(plain.replace("-latest", ""))
+        add(f"models/{plain.replace('-latest', '')}")
+
+    return candidates
+
+
+def _generate(api_key: str, model_name: str, prompt: str, temperature: float = 0.5, max_output_tokens: int = 3072) -> str:
+    genai.configure(api_key=api_key)
+    last_error = None
+
+    for name in _model_candidates(model_name):
+        try:
+            model = genai.GenerativeModel(name)
+            resp = model.generate_content(
+                prompt,
+                generation_config={"temperature": temperature, "max_output_tokens": max_output_tokens},
+            )
+            return getattr(resp, "text", "") or ""
+        except Exception as e:
+            last_error = e
+            continue
+
+    raise last_error
 
 
 # -----------------------------
@@ -282,11 +339,9 @@ st.set_page_config(page_title=APP_TITLE, page_icon="🧠", layout="centered")
 if "step" not in st.session_state:
     st.session_state["step"] = 1
 
-# Sidebar minimal
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
-    model_name = st.selectbox("Modelo", ["gemini-1.5-flash", "gemini-1.5-pro"], index=0)
 
     loaded_memory = None
     with st.expander("Avanzado", expanded=False):
@@ -323,8 +378,7 @@ if st.session_state["step"] == 1:
     with c2:
         freq_int = st.slider("Frecuencia real de posteo", 1, 3, 1, help="1: 2/semana · 2: 3/semana · 3: diario")
         frequency = _frequency_label(freq_int)
-
-    st.caption("Tip: si dudás, elegí la opción más baja. Cumplir > fantasear.")
+        st.caption("Tip: si dudás, elegí la opción más baja. Cumplir > fantasear.")
 
     tone = st.selectbox(
         "Tono de mensajes",
@@ -369,7 +423,11 @@ if st.session_state["step"] == 2:
     st.info("Un click y te devuelvo un plan ordenado, listo para usar.")
 
     st.write(f"**Proyecto:** {st.session_state['project']}")
-    st.write(f"**Prioridad:** {st.session_state['priority']} · **Frecuencia:** {st.session_state['frequency']} · **Tono:** {st.session_state['tone']}")
+    st.write(
+        f"**Prioridad:** {st.session_state['priority']} · "
+        f"**Frecuencia:** {st.session_state['frequency']} · "
+        f"**Tono:** {st.session_state['tone']}"
+    )
 
     c1, c2 = st.columns(2)
     with c1:
@@ -395,11 +453,10 @@ if st.session_state["step"] == 2:
                 "constraints": st.session_state.get("constraints", ""),
             }
 
-            model = _make_model(api_key, model_name)
             prompt = _build_prompt(inputs, loaded_memory)
 
             with st.spinner("Generando…"):
-                raw = _generate(model, prompt, temperature=0.5, max_output_tokens=3072)
+                raw = _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072)
 
             bp = _safe_json_loads(raw)
             issues = _validate(bp) if bp is not None else ["No pude parsear JSON."]
@@ -407,7 +464,7 @@ if st.session_state["step"] == 2:
             if issues:
                 fix = _build_fix_prompt(raw, issues)
                 with st.spinner("Ajustando (1 pasada)…"):
-                    raw2 = _generate(model, fix, temperature=0.3, max_output_tokens=3072)
+                    raw2 = _generate(api_key, model_name, fix, temperature=0.3, max_output_tokens=3072)
                 bp2 = _safe_json_loads(raw2)
                 issues2 = _validate(bp2) if bp2 is not None else ["No pude parsear JSON tras corrección."]
                 if issues2:
@@ -417,7 +474,12 @@ if st.session_state["step"] == 2:
                     st.stop()
                 bp = bp2
 
+            # Exports (ensure)
+            bp.setdefault("exports", {})
             bp["exports"]["blueprint_json"] = json.dumps(bp, ensure_ascii=False, indent=2)
+            if not (bp["exports"].get("calendar_csv") or "").strip():
+                bp["exports"]["calendar_csv"] = _format_calendar_csv(bp.get("calendar", []))
+
             st.session_state["bp"] = bp
             st.session_state["step"] = 3
             st.rerun()
