@@ -169,8 +169,7 @@ def _build_prompt(inputs: dict, previous: dict | None) -> str:
     return f"""
 Eres SPRING OS — Direction Engine™.
 Tu trabajo: instalar dirección clara y ejecutable (no motivar, no marear).
-Escribe como Flor: directo, cálido con autoridad, rioplatense elegante.
-No uses español neutro.
+Escribí como Flor: directo, cálido con autoridad, rioplatense elegante.
 Prohibido: promesas mágicas, exageraciones, "viral", "sin esfuerzo", "garantizado".
 
 {prev}
@@ -194,8 +193,8 @@ REGLAS:
 1) "summary_60s" primero: dirección en 60 segundos.
 2) "what_to_do_now": 5 acciones concretas, en orden, para que el usuario no se pierda.
 3) "calendar" ~ {rows} entradas (ajustado a {capacity}). No lo infles.
-4) Paleta con HEX válidos #RRGGBB y coherente con energía.
-5) "whisper" máximo 2 líneas, accionable.
+4) Paleta HEX válida #RRGGBB.
+5) "whisper" máximo 2 líneas.
 6) Devuelve SOLO JSON válido. Sin markdown. Sin texto extra.
 7) exports.calendar_csv y exports.blueprint_json completos.
 
@@ -205,7 +204,7 @@ ESQUEMA:
 
 def _build_fix_prompt(model_output: str, issues: list) -> str:
     return f"""
-Arregla el JSON para que sea válido y cumpla reglas. Devuelve SOLO JSON.
+Arreglá el JSON para que sea válido y cumpla reglas. Devolvé SOLO JSON.
 
 Problemas:
 - {chr(10).join([f"* {i}" for i in issues])}
@@ -213,7 +212,7 @@ Problemas:
 Salida anterior:
 {model_output}
 
-Recuerda: HEX #RRGGBB, 3 pillars exactos, whisper corto, calendar ajustado, what_to_do_now (5 acciones).
+Recordá: HEX #RRGGBB, 3 pilares exactos, whisper corto, calendar ajustado, what_to_do_now (5 acciones).
 """.strip()
 
 def _validate(bp: dict) -> list:
@@ -227,12 +226,10 @@ def _validate(bp: dict) -> list:
         if k not in bp:
             issues.append(f"Falta: {k}")
 
-    # what_to_do_now
     wtdn = bp.get("what_to_do_now")
     if not isinstance(wtdn, list) or len(wtdn) != 5:
         issues.append("what_to_do_now debe tener 5 acciones exactas")
 
-    # palette hex
     try:
         pal = bp["brand_quick_kit"]["visual"]["palette"]
         for rk in ["primary","secondary","accent","background","text"]:
@@ -241,17 +238,14 @@ def _validate(bp: dict) -> list:
     except Exception:
         issues.append("brand_quick_kit.visual.palette incompleto")
 
-    # pillars length
     if not isinstance(bp.get("pillars"), list) or len(bp["pillars"]) != 3:
         issues.append("pillars debe tener 3 elementos exactos")
 
-    # whisper length
     if not isinstance(bp.get("whisper"), str) or len(bp["whisper"].strip()) == 0:
         issues.append("whisper vacío")
     if isinstance(bp.get("whisper"), str) and len(bp["whisper"]) > 220:
         issues.append("whisper demasiado largo")
 
-    # score range
     try:
         s = int(bp.get("coherence_score"))
         if s < 0 or s > 100:
@@ -259,7 +253,6 @@ def _validate(bp: dict) -> list:
     except Exception:
         issues.append("coherence_score no numérico")
 
-    # exports
     ex = bp.get("exports", {})
     if not isinstance(ex, dict) or "calendar_csv" not in ex or "blueprint_json" not in ex:
         issues.append("exports incompleto (calendar_csv, blueprint_json)")
@@ -272,41 +265,39 @@ def _validate(bp: dict) -> list:
 st.set_page_config(page_title=APP_TITLE, page_icon="🧠", layout="centered")
 
 if "step" not in st.session_state:
-    st.session_state.step = 1
+    st.session_state["step"] = 1
 
-# Sidebar: mínimo
+# Sidebar minimal
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
     model_name = st.selectbox("Modelo", ["gemini-1.5-flash", "gemini-1.5-pro"], index=0)
 
+    loaded_memory = None
     with st.expander("Avanzado", expanded=False):
         memories = _list_memories()
         mem_labels = ["(sin memoria)"] + [k for k, _ in memories]
         selected_mem = st.selectbox("Memoria", mem_labels, index=0)
-        loaded_memory = None
         if selected_mem != "(sin memoria)":
             for k, data in memories:
                 if k == selected_mem:
                     loaded_memory = data
                     break
-    if "loaded_memory" not in locals():
-        loaded_memory = None
 
 st.title(APP_TITLE)
 st.caption(APP_TAGLINE)
 
-# Stepper header
 steps = {1: "1) Elegí", 2: "2) Instalá", 3: "3) Ejecutá"}
-st.markdown(f"**Paso actual:** {steps.get(st.session_state.step)}")
+st.markdown(f"**Paso actual:** {steps.get(st.session_state['step'])}")
 
 # STEP 1
-if st.session_state.step == 1:
-    st.markdown("### Arrancá por acá (literal)")
-    st.info("Elegí **una** prioridad. Después calibrás capacidad. El resto lo arma el sistema.")
+if st.session_state["step"] == 1:
+    st.markdown("### Arrancá por acá")
+    st.info("Elegí una prioridad. Calibrá capacidad. Listo. No te pido más para darte dirección.")
 
-    mode = st.segmented_control("Modo", ["Rápido", "Pro"], default="Rápido")
-    st.session_state.mode = mode
+    # ✅ reemplazo de segmented_control por radio (compatible)
+    mode = st.radio("Modo", ["Rápido", "Pro"], index=0, horizontal=True)
+    st.session_state["mode"] = mode
 
     c1, c2 = st.columns(2)
     with c1:
@@ -318,65 +309,65 @@ if st.session_state.step == 1:
         capacity = _capacity_label(cap_int)
         energy = st.selectbox("Energía", ["Precisión","Sofisticación","Cercanía","Ambición","Minimal"], index=0)
 
-    st.session_state.project = project.strip()
-    st.session_state.movement = movement
-    st.session_state.audience = audience
-    st.session_state.capacity = capacity
-    st.session_state.energy = energy
+    st.session_state["project"] = project.strip()
+    st.session_state["movement"] = movement
+    st.session_state["audience"] = audience
+    st.session_state["capacity"] = capacity
+    st.session_state["energy"] = energy
 
     if mode == "Pro":
         with st.expander("Brief Pro (opcional)", expanded=False):
-            st.session_state.sector = st.text_input("Rubro (ej: estética, abogacía, óptica)", value="")
-            st.session_state.offer = st.text_area("Oferta (1 línea)", value="", placeholder="¿Qué vendés? ¿Qué entregás?", height=55)
-            st.session_state.target = st.text_area("Target (1 línea)", value="", placeholder="¿Quién compra y por qué?", height=55)
-            st.session_state.anti = st.text_input("Anti-marca (3 palabras)", value="", placeholder="Ej: humo, genérico, confuso")
-            st.session_state.constraints = st.text_area("Restricciones (realidad)", value="", placeholder="Tiempo, exposición, recursos…", height=55)
+            st.session_state["sector"] = st.text_input("Rubro", value="")
+            st.session_state["offer"] = st.text_area("Oferta (1 línea)", value="", height=55)
+            st.session_state["target"] = st.text_area("Target (1 línea)", value="", height=55)
+            st.session_state["anti"] = st.text_input("Anti-marca", value="")
+            st.session_state["constraints"] = st.text_area("Restricciones", value="", height=55)
     else:
-        st.session_state.sector = ""
-        st.session_state.offer = ""
-        st.session_state.target = ""
-        st.session_state.anti = ""
-        st.session_state.constraints = ""
+        st.session_state["sector"] = ""
+        st.session_state["offer"] = ""
+        st.session_state["target"] = ""
+        st.session_state["anti"] = ""
+        st.session_state["constraints"] = ""
 
     colA, colB = st.columns(2)
     with colA:
         if st.button("Siguiente →", use_container_width=True):
-            st.session_state.step = 2
+            st.session_state["step"] = 2
             st.rerun()
     with colB:
-        st.caption("Tip: si dudás, elegí **capacidad baja**. Es mejor cumplir que fantasear.")
+        st.caption("Tip: si dudás, poné capacidad baja. Cumplir > fantasear.")
 
 # STEP 2
-if st.session_state.step == 2:
+if st.session_state["step"] == 2:
     st.markdown("### Instalación")
-    st.info("Acá no hay magia. Hay dirección ejecutable. Un click y te devuelvo orden.")
+    st.info("Un click. Te devuelvo orden.")
 
-    st.write(f"**Proyecto:** {st.session_state.project}")
-    st.write(f"**Prioridad:** {st.session_state.movement} · **Capacidad:** {st.session_state.capacity} · **Público:** {st.session_state.audience}")
+    st.write(f"**Proyecto:** {st.session_state['project']}")
+    st.write(f"**Prioridad:** {st.session_state['movement']} · **Capacidad:** {st.session_state['capacity']} · **Público:** {st.session_state['audience']}")
 
-    col1, col2 = st.columns(2)
-    with col1:
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("← Volver", use_container_width=True):
-            st.session_state.step = 1
+            st.session_state["step"] = 1
             st.rerun()
-    with col2:
+    with c2:
         if st.button("INSTALAR DIRECCIÓN", type="primary", use_container_width=True):
             if not api_key:
                 st.error("Te falta la API key.")
                 st.stop()
 
             inputs = {
-                "project": st.session_state.project,
-                "movement": st.session_state.movement,
-                "capacity": st.session_state.capacity,
-                "audience": st.session_state.audience,
-                "energy": st.session_state.energy,
-                "mode": st.session_state.mode,
-                "sector": st.session_state.sector,
-                "offer": st.session_state.offer,
-                "target": st.session_state.target,
-                "anti": st.session_state.anti,
-                "constraints": st.session_state.constraints,
+                "project": st.session_state["project"],
+                "movement": st.session_state["movement"],
+                "capacity": st.session_state["capacity"],
+                "audience": st.session_state["audience"],
+                "energy": st.session_state["energy"],
+                "mode": st.session_state["mode"],
+                "sector": st.session_state["sector"],
+                "offer": st.session_state["offer"],
+                "target": st.session_state["target"],
+                "anti": st.session_state["anti"],
+                "constraints": st.session_state["constraints"],
             }
 
             model = _make_model(api_key, model_name)
@@ -402,15 +393,15 @@ if st.session_state.step == 2:
                 bp = bp2
 
             bp["exports"]["blueprint_json"] = json.dumps(bp, ensure_ascii=False, indent=2)
-            st.session_state.bp = bp
-            st.session_state.step = 3
+            st.session_state["bp"] = bp
+            st.session_state["step"] = 3
             st.rerun()
 
 # STEP 3
-if st.session_state.step == 3:
+if st.session_state["step"] == 3:
     bp = st.session_state.get("bp")
     if not bp:
-        st.session_state.step = 1
+        st.session_state["step"] = 1
         st.rerun()
 
     st.markdown("### Ejecutá (sin perderte)")
@@ -420,7 +411,7 @@ if st.session_state.step == 3:
     st.info(f"**Whisper:** {bp.get('whisper','')}")
     st.metric("Coherence Score", f"{bp.get('coherence_score')}%")
 
-    st.markdown("#### Tu brújula: qué hacer ahora (en orden)")
+    st.markdown("#### Tu brújula (en orden)")
     for i, action in enumerate(bp.get("what_to_do_now", []), start=1):
         st.write(f"{i}. {action}")
 
@@ -434,39 +425,19 @@ if st.session_state.step == 3:
     with st.expander("Calendario (detalle)", expanded=False):
         st.dataframe(bp.get("calendar", []), use_container_width=True)
 
-    with st.expander("Kit visual (paleta + reglas)", expanded=False):
-        visual = (bp.get("brand_quick_kit", {}).get("visual") or {})
-        pal = visual.get("palette", {})
-        cols = st.columns(5)
-        keys = [("primary","Primario"),("secondary","Secundario"),("accent","Acento"),("background","Fondo"),("text","Texto")]
-        for idx,(k,label) in enumerate(keys):
-            with cols[idx]:
-                st.caption(label)
-                st.code(pal.get(k,""), language="text")
-        typo = visual.get("typography", {})
-        st.write(f"**Tipografías:** {typo.get('headlines','')} / {typo.get('body','')}")
-        st.write("**3 reglas:**")
-        for r in (visual.get("3_rules") or []):
-            st.write(f"- {r}")
-
-    with st.expander("Reality Check™", expanded=False):
-        rc = bp.get("reality_check", {})
-        st.write(f"**Riesgo principal:** {rc.get('primary_risk','')}")
-        st.write(f"**Ajuste único:** {rc.get('one_adjustment','')}")
-
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    a, b, c = st.columns(3)
+    with a:
         if st.button("← Ajustar decisiones", use_container_width=True):
-            st.session_state.step = 1
+            st.session_state["step"] = 1
             st.rerun()
-    with c2:
-        if st.button("Regenerar con misma config", use_container_width=True):
-            st.session_state.step = 2
+    with b:
+        if st.button("Regenerar", use_container_width=True):
+            st.session_state["step"] = 2
             st.rerun()
-    with c3:
+    with c:
         mem_key = f"{_slugify(bp.get('project_name','spring'))}_{_now_id()}"
-        if st.button("Guardar en memoria", use_container_width=True):
+        if st.button("Guardar memoria", use_container_width=True):
             _save_memory(mem_key, bp)
             st.success(f"Guardado: {mem_key}")
 
