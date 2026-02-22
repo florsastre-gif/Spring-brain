@@ -101,13 +101,7 @@ def _generate(api_key, prompt, temperature=0.5, max_output_tokens=3072):
 
     model = genai.GenerativeModel("gemini-2.5-flash")
 
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-        },
-    )
+    response = model.generate_content
 
     return response.text
 
@@ -307,22 +301,7 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
-    model_name = st.selectbox(
-        "Modelo",
-        ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"],
-        index=0,
-    )
-
-    loaded_memory = None
-    with st.expander("Avanzado", expanded=False):
-        memories = _list_memories()
-        mem_labels = ["(sin memoria)"] + [k for k, _ in memories]
-        selected_mem = st.selectbox("Memoria", mem_labels, index=0)
-        if selected_mem != "(sin memoria)":
-            for k, data in memories:
-                if k == selected_mem:
-                    loaded_memory = data
-                    break
+    
 
 st.title(APP_TITLE)
 st.caption(APP_TAGLINE)
