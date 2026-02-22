@@ -12,7 +12,7 @@ APP_TAGLINE = "Un sistema simple para decidir qué hacer este mes."
 MEM_DIR = "spring_memory"
 os.makedirs(MEM_DIR, exist_ok=True)
 
-MODEL_NAME = "gemini-2.5-flash"  # llamada directa (simple)
+model = genai.GenerativeModel("models/gemini-2.5-pro")
 
 
 # -----------------------------
