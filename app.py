@@ -3,29 +3,32 @@ import os
 import json
 import re
 from datetime import datetime
+
 import streamlit as st
 import google.generativeai as genai
+
 
 APP_TITLE = "SPRING OS — Direction Engine™"
 APP_TAGLINE = "Un sistema simple para decidir qué hacer este mes."
 MEM_DIR = "spring_memory"
 os.makedirs(MEM_DIR, exist_ok=True)
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
-def _now_id() -> str:
+def _now_id():
     return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
 
-def _slugify(text: str) -> str:
+def _slugify(text):
     text = (text or "").strip().lower()
     text = re.sub(r"[^a-z0-9áéíóúñü\s-]", "", text)
     text = re.sub(r"\s+", "-", text)
     return text[:60] or "spring"
 
 
-def _safe_json_loads(s: str):
+def _safe_json_loads(s):
     s = (s or "").strip()
     try:
         return json.loads(s)
@@ -40,11 +43,11 @@ def _safe_json_loads(s: str):
     return None
 
 
-def _hex_ok(v: str) -> bool:
+def _hex_ok(v):
     return bool(re.fullmatch(r"#([A-Fa-f0-9]{6})", (v or "").strip()))
 
 
-def _save_memory(key: str, data: dict):
+def _save_memory(key, data):
     path = os.path.join(MEM_DIR, f"{key}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -65,11 +68,11 @@ def _list_memories():
     return items
 
 
-def _frequency_label(x: int) -> str:
-    return {1: "2/semana", 2: "3/semana", 3: "diario"}.get(x, "2/semana")
+def _frequency_label(x):
+    return {1: "2/semana", 2: "3/semana", 3: "diario"}.get(int(x), "2/semana")
 
 
-def _calendar_target_rows(freq: str) -> int:
+def _calendar_target_rows(freq):
     if freq == "2/semana":
         return 8
     if freq == "3/semana":
@@ -77,7 +80,7 @@ def _calendar_target_rows(freq: str) -> int:
     return 25
 
 
-def _format_calendar_csv(rows: list) -> str:
+def _format_calendar_csv(rows):
     cols = ["día", "formato", "intención", "título", "cta"]
     out = [",".join(cols)]
     for r in rows or []:
@@ -96,40 +99,41 @@ def _format_calendar_csv(rows: list) -> str:
 # -----------------------------
 # Gemini (Direct call) — robust model resolution
 # -----------------------------
-def _model_candidates(model_name: str) -> list[str]:
+def _model_candidates(model_name):
     base = (model_name or "").strip()
     if not base:
-        base = "gemini-2.5-flash"
+        base = "gemini-1.5-flash-latest"
 
     candidates = []
 
-    def add(x: str):
+    def add(x):
         x = (x or "").strip()
         if x and x not in candidates:
             candidates.append(x)
 
-    # As-is
+    # as-is
     add(base)
 
-    # Ensure models/ prefix
+    # with models/ prefix
     if not base.startswith("models/"):
         add(f"models/{base}")
 
-    # Add -latest variants if missing
+    # add -latest variants if missing
     plain = base.replace("models/", "")
     if "latest" not in plain:
         add(f"{plain}-latest")
         add(f"models/{plain}-latest")
 
-    # If user already gave -latest, still try the plain too
+    # if already -latest, also try non-latest
     if plain.endswith("-latest"):
-        add(plain.replace("-latest", ""))
-        add(f"models/{plain.replace('-latest', '')}")
+        base_plain = plain.replace("-latest", "")
+        add(base_plain)
+        add(f"models/{base_plain}")
 
     return candidates
 
 
-def _generate(api_key: str, model_name: str, prompt: str, temperature: float = 0.5, max_output_tokens: int = 3072) -> str:
+def _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072):
     genai.configure(api_key=api_key)
     last_error = None
 
@@ -151,7 +155,7 @@ def _generate(api_key: str, model_name: str, prompt: str, temperature: float = 0
 # -----------------------------
 # Prompt
 # -----------------------------
-def _build_prompt(inputs: dict, previous: dict | None) -> str:
+def _build_prompt(inputs, previous):
     project = inputs["project"]
     priority = inputs["priority"]
     frequency = inputs["frequency"]
@@ -269,7 +273,7 @@ ESQUEMA:
 """.strip()
 
 
-def _build_fix_prompt(model_output: str, issues: list) -> str:
+def _build_fix_prompt(model_output, issues):
     return f"""
 Arreglá el JSON para que sea válido y cumpla reglas. Devolvé SOLO JSON.
 
@@ -283,7 +287,7 @@ Recordá: HEX #RRGGBB, 3 pilares exactos, whisper corto, calendar ajustado, what
 """.strip()
 
 
-def _validate(bp: dict) -> list:
+def _validate(bp):
     issues = []
     if not isinstance(bp, dict):
         return ["No es JSON objeto."]
@@ -312,9 +316,10 @@ def _validate(bp: dict) -> list:
     if not isinstance(bp.get("pillars"), list) or len(bp["pillars"]) != 3:
         issues.append("pillars debe tener 3 elementos exactos")
 
-    if not isinstance(bp.get("whisper"), str) or len(bp["whisper"].strip()) == 0:
+    whisper = bp.get("whisper")
+    if not isinstance(whisper, str) or len(whisper.strip()) == 0:
         issues.append("whisper vacío")
-    if isinstance(bp.get("whisper"), str) and len(bp["whisper"]) > 220:
+    if isinstance(whisper, str) and len(whisper) > 220:
         issues.append("whisper demasiado largo")
 
     try:
@@ -342,6 +347,11 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
+    model_name = st.selectbox(
+        "Modelo",
+        ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"],
+        index=0,
+    )
 
     loaded_memory = None
     with st.expander("Avanzado", expanded=False):
@@ -434,6 +444,7 @@ if st.session_state["step"] == 2:
         if st.button("← Volver", use_container_width=True):
             st.session_state["step"] = 1
             st.rerun()
+
     with c2:
         if st.button("Generar plan", type="primary", use_container_width=True):
             if not api_key:
@@ -455,28 +466,40 @@ if st.session_state["step"] == 2:
 
             prompt = _build_prompt(inputs, loaded_memory)
 
-            with st.spinner("Generando…"):
-                raw = _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072)
+            # 👉 Capturamos el error REAL en pantalla
+            try:
+                with st.spinner("Generando…"):
+                    raw = _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072)
+            except Exception as e:
+                st.error(f"Error al generar: {type(e).__name__}: {e}")
+                st.stop()
 
             bp = _safe_json_loads(raw)
             issues = _validate(bp) if bp is not None else ["No pude parsear JSON."]
 
             if issues:
                 fix = _build_fix_prompt(raw, issues)
-                with st.spinner("Ajustando (1 pasada)…"):
-                    raw2 = _generate(api_key, model_name, fix, temperature=0.3, max_output_tokens=3072)
+                try:
+                    with st.spinner("Ajustando (1 pasada)…"):
+                        raw2 = _generate(api_key, model_name, fix, temperature=0.3, max_output_tokens=3072)
+                except Exception as e:
+                    st.error(f"Error al corregir: {type(e).__name__}: {e}")
+                    st.stop()
+
                 bp2 = _safe_json_loads(raw2)
                 issues2 = _validate(bp2) if bp2 is not None else ["No pude parsear JSON tras corrección."]
+
                 if issues2:
                     st.error("Salida inválida:")
                     for i in issues2:
                         st.write(f"- {i}")
                     st.stop()
+
                 bp = bp2
 
-            # Exports (ensure)
             bp.setdefault("exports", {})
             bp["exports"]["blueprint_json"] = json.dumps(bp, ensure_ascii=False, indent=2)
+
             if not (bp["exports"].get("calendar_csv") or "").strip():
                 bp["exports"]["calendar_csv"] = _format_calendar_csv(bp.get("calendar", []))
 
