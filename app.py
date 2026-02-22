@@ -3,43 +3,26 @@ import re
 import zipfile
 import time
 from datetime import datetime
-
 import streamlit as st
 from PIL import Image
-
 from google import genai
 from google.genai import types
 
 # ----------------------------
-# Configuración y Constantes
+# 1. Configuración y Modelo
 # ----------------------------
-APP_TITLE = "SPRING OS — Direction → Visual Pack™"
-APP_TAGLINE = "Dirección primero. Piezas después."
-# Usamos gemini-2.0-flash para mayor estabilidad en generación
-MODEL_IMAGE = "gemini-2.0-flash" 
-MAX_IMAGES_PER_RUN = 18
+# Usamos Gemini 1.5 Flash por ser el modelo más estable para el Tier Gratuito
+APP_TITLE = "SPRING OS — Visual Pack™"
+MODEL_IMAGE = "gemini-1.5-flash" 
 
 # ----------------------------
-# Helpers Técnicos
+# 2. Helpers Técnicos
 # ----------------------------
 def _slug(s: str) -> str:
     s = (s or "").strip().lower()
     s = re.sub(r"[^a-z0-9áéíóúñü\s-]", "", s)
     s = re.sub(r"\s+", "-", s)
     return s[:60] or "spring"
-
-def _now() -> str:
-    return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-
-def _freq_to_posts_per_week(freq: str) -> int:
-    return {"2/semana": 2, "3/semana": 3, "diario": 5}.get(freq, 2)
-
-def _format_label_to_aspect(label: str) -> str:
-    return {
-        "Reel/Story (9:16)": "9:16",
-        "Post (1:1)": "1:1",
-        "Horizontal (16:9)": "16:9",
-    }.get(label, "1:1")
 
 def _zip_images(images: list[tuple[str, bytes]]) -> bytes:
     buf = io.BytesIO()
@@ -49,14 +32,14 @@ def _zip_images(images: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 # ----------------------------
-# Motor de Generación con Resiliencia
+# 3. Motor de Generación con Backoff (Solución Error 429)
 # ----------------------------
 def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=2) -> bytes:
     """
-    Gestiona la generación de imagen con backoff exponencial para evitar el error 429.
+    Intenta generar la imagen. Si recibe el error 429 de tus capturas, 
+    espera 30 segundos y reintenta.
     """
     client = genai.Client(api_key=api_key)
-    
     for attempt in range(retries + 1):
         try:
             resp = client.models.generate_content(
@@ -66,8 +49,6 @@ def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=
                     image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
                 ),
             )
-            
-            # Validación de seguridad y contenido
             if not resp.candidates or not resp.candidates[0].content.parts:
                 raise RuntimeError("La IA bloqueó la imagen por filtros de seguridad.")
 
@@ -78,130 +59,103 @@ def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=
                 return buf.getvalue()
                 
         except Exception as e:
-            # Captura el error de cuota excedida detectado en la captura
+            # Captura el error de cuota excedida de tus capturas
             if "429" in str(e) and attempt < retries:
-                wait_time = (attempt + 1) * 15 
-                st.warning(f"Límite de cuota (429). Reintentando en {wait_time}s...")
+                wait_time = 30 
+                st.warning(f"Límite alcanzado. Esperando {wait_time}s para reintentar (Intento {attempt+1})...")
                 time.sleep(wait_time)
             else:
                 raise e
-                
-    raise RuntimeError("No se pudo completar la generación tras los reintentos.")
+    raise RuntimeError("No se pudo completar la generación. Revisa tu cuota diaria en Google AI Studio.")
 
 # ----------------------------
-# Prompt Engine (Oculto)
+# 4. Interfaz de Usuario (UI)
 # ----------------------------
-def _hidden_prompt_for_piece(data: dict, piece_type: str, piece_idx: int, aspect_ratio: str) -> str:
-    return f"""
-Genera UNA imagen publicitaria profesional.
-Proyecto: {data['project']}
-Estilo Visual: {data['visual_style']}
-Paleta: {data['palette_hint']}
-Objetivo: {data['priority']}
-Tipo de pieza: {piece_type}
-Variación: {piece_idx}
-Formato: {aspect_ratio}
-Reglas: Fotografía de alta gama, evitar plantillas, texto máximo 5 palabras.
-""".strip()
-
-# ----------------------------
-# Interfaz de Usuario (UI)
-# ----------------------------
-st.set_page_config(page_title=APP_TITLE, page_icon="🎛️", layout="centered")
+st.set_page_config(page_title=APP_TITLE, page_icon="🎛️")
 st.title(APP_TITLE)
-st.caption(APP_TAGLINE)
 
-if "step" not in st.session_state:
+if "step" not in st.session_state: 
     st.session_state.step = 1
 
 with st.sidebar:
-    st.markdown("### Acceso")
+    st.header("🔑 Configuración")
     api_key = st.text_input("Google API Key", type="password")
-    st.caption("Obtén tu key en Google AI Studio.")
+    st.caption("Usa tu key de Google AI Studio.")
 
-# PASO 1 — Dirección
+# PASO 1: DIRECCIÓN
 if st.session_state.step == 1:
-    st.markdown("## 1) Dirección Estratégica")
-    project = st.text_input("Nombre del Proyecto", value="SPRING")
-    priority = st.selectbox("Prioridad del Mes", ["Venta", "Branding", "Comunidad"])
-    freq = st.selectbox("Frecuencia", ["2/semana", "3/semana", "diario"])
-    tone = st.text_input("Tono", value="Sofisticado y minimalista")
+    st.subheader("1) Dirección Estratégica")
+    project = st.text_input("Proyecto", value="SPRING")
+    style = st.selectbox("Estilo Visual", ["Minimalista Premium", "Tech Moderno", "Vibrante"])
     
-    st.markdown("#### Dirección Visual")
-    visual_style = st.selectbox("Estilo", ["Tech claro", "Minimalista premium", "Moderno disruptivo"])
-    palette_hint = st.text_input("Paleta de colores", value="Verde bosque + Beige")
-    must_include = st.text_input("Incluir", value="Producto en primer plano")
-    avoid = st.text_input("Evitar", value="Colores chillones, mucho texto")
-
-    if st.button("Configurar Piezas →", type="primary", use_container_width=True):
-        st.session_state.data = {
-            "project": project, "priority": priority, "freq": freq, "tone": tone,
-            "visual_style": visual_style, "palette_hint": palette_hint,
-            "must_include": must_include, "avoid": avoid
-        }
+    if st.button("Siguiente →", type="primary", use_container_width=True):
+        st.session_state.data = {"project": project, "style": style}
         st.session_state.step = 2
         st.rerun()
 
-# PASO 2 — Configuración del Pack
+# PASO 2: CONFIGURACIÓN LIMITADA (Para evitar Error 429)
 if st.session_state.step == 2:
-    st.markdown("## 2) Configuración del Pack")
-    pieces = st.multiselect("Tipos de piezas", ["Post promo", "Post educativo", "Story gancho"], default=["Post promo"])
-    # Recomendamos 1 solo formato para no saturar la cuota
-    formats = st.multiselect("Formatos", ["Reel/Story (9:16)", "Post (1:1)", "Horizontal (16:9)"], default=["Post (1:1)"])
+    st.subheader("2) Configuración del Pack")
+    st.info("⚠️ Para asegurar el éxito en el nivel gratuito, el máximo es de 3 imágenes.")
+    
+    num_imgs = st.slider("Cantidad de variaciones", 1, 3, 1)
+    fmt = st.selectbox("Formato", ["Post (1:1)", "Story (9:16)"])
 
-    c1, c2 = st.columns(2)
-    with c1:
+    col1, col2 = st.columns(2)
+    with col1:
         if st.button("← Volver"):
             st.session_state.step = 1
             st.rerun()
-    with c2:
-        if st.button("Siguiente →", type="primary"):
-            st.session_state.data["pieces"] = pieces
-            st.session_state.data["formats"] = formats
+    with col2:
+        if st.button("🚀 Generar Pack", type="primary"):
+            st.session_state.data["num_imgs"] = num_imgs
+            st.session_state.data["fmt"] = fmt
             st.session_state.step = 3
             st.rerun()
 
-# PASO 3 — Generación Final
+# PASO 3: GENERACIÓN Y DESCARGA
 if st.session_state.step == 3:
-    st.markdown("## 3) Generación del Visual Pack™")
+    st.subheader("3) Tu Visual Pack™")
     data = st.session_state.data
     
-    if st.button("🚀 Generar Imágenes", type="primary", use_container_width=True):
-        if not api_key:
-            st.error("Por favor, introduce tu API Key en la barra lateral.")
+    if st.button("Iniciar Generación", type="primary", use_container_width=True):
+        if not api_key: 
+            st.error("Falta la API Key en la barra lateral.")
             st.stop()
-            
-        outputs = []
-        run_id = f"{_slug(data['project'])}_{_now()}"
-        posts_per_week = _freq_to_posts_per_week(data["freq"])
         
-        with st.spinner("Generando activos con IA..."):
-            for i in range(1, posts_per_week + 1):
-                for piece_type in data["pieces"]:
-                    # Procesamos el formato principal seleccionado
-                    fmt = data["formats"][0] if data["formats"] else "Post (1:1)"
-                    aspect = _format_label_to_aspect(fmt)
-                    prompt = _hidden_prompt_for_piece(data, piece_type, i, aspect)
+        outputs = []
+        progress_bar = st.progress(0)
+        
+        with st.spinner("Generando piezas con IA..."):
+            for i in range(data["num_imgs"]):
+                try:
+                    aspect = "1:1" if "1:1" in data["fmt"] else "9:16"
+                    prompt = f"Professional {data['style']} brand visual for {data['project']}. High quality, cinematic lighting."
                     
-                    try:
-                        img_bytes = _generate_image_bytes(api_key, prompt, aspect)
-                        fn = f"{run_id}/{_slug(piece_type)}_v{i}.png"
-                        outputs.append((fn, img_bytes))
-                        # Pausa de seguridad para no saturar la API
-                        time.sleep(2) 
-                    except Exception as e:
-                        st.error(f"Error en {piece_type}: {e}")
-                        st.stop()
+                    img_bytes = _generate_image_bytes(api_key, prompt, aspect)
+                    outputs.append((f"v{i+1}_{_slug(data['project'])}.png", img_bytes))
+                    
+                    progress_bar.progress((i + 1) / data["num_imgs"])
+                    
+                    # PAUSA DE SEGURIDAD: 10s entre imágenes para no saturar la cuota
+                    if i < data["num_imgs"] - 1:
+                        st.info(f"Imagen {i+1} completada. Pausa de 10s para proteger tu cuota...")
+                        time.sleep(10) 
+                        
+                except Exception as e:
+                    st.error(f"Fallo técnico: {e}")
+                    st.info("Tip: Si el error 429 persiste, espera 5 minutos o usa otra API Key.")
+                    break
         
         st.session_state.outputs = outputs
-        st.success("¡Pack visual generado con éxito!")
 
-    if "outputs" in st.session_state:
+    if "outputs" in st.session_state and st.session_state.outputs:
+        st.success("¡Pack generado con éxito!")
         zip_data = _zip_images(st.session_state.outputs)
         st.download_button(
-            label="⬇️ Descargar todo el Pack (.zip)",
+            "⬇️ Descargar Pack (.zip)",
             data=zip_data,
-            file_name=f"spring_pack_{_now()}.zip",
+            file_name=f"pack_{_slug(data['project'])}.zip",
             mime="application/zip",
             use_container_width=True
         )
