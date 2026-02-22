@@ -102,7 +102,7 @@ def _format_calendar_csv(rows):
 def _model_candidates(model_name):
     base = (model_name or "").strip()
     if not base:
-        base = "gemini-1.5-flash-latest"
+        base = "gemini-2.5-flash"
 
     candidates = []
 
@@ -347,11 +347,6 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
-    model_name = st.selectbox(
-        "Modelo",
-        ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"],
-        index=0,
-    )
 
     loaded_memory = None
     with st.expander("Avanzado", expanded=False):
