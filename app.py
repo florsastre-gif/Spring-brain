@@ -7,11 +7,12 @@ from datetime import datetime
 import streamlit as st
 import google.generativeai as genai
 
-
 APP_TITLE = "SPRING OS — Direction Engine™"
 APP_TAGLINE = "Un sistema simple para decidir qué hacer este mes."
 MEM_DIR = "spring_memory"
 os.makedirs(MEM_DIR, exist_ok=True)
+
+MODEL_NAME = "gemini-2.5-flash"  # llamada directa (simple)
 
 
 # -----------------------------
@@ -96,18 +97,28 @@ def _format_calendar_csv(rows):
     return "\n".join(out)
 
 
+# -----------------------------
+# Gemini direct call (simple)
+# -----------------------------
 def _generate(api_key, prompt, temperature=0.5, max_output_tokens=3072):
     genai.configure(api_key=api_key)
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    # En algunos entornos puede requerir "models/gemini-2.5-flash"
+    # Si te da NotFound, cambiá a: model = genai.GenerativeModel("models/gemini-2.5-flash")
+    model = genai.GenerativeModel(MODEL_NAME)
 
-    response = model.generate_content
-
-    return response.text
+    resp = model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        },
+    )
+    return getattr(resp, "text", "") or ""
 
 
 # -----------------------------
-# Prompt
+# Prompt (IMPORTANTE: esta es la función que te faltaba)
 # -----------------------------
 def _build_prompt(inputs, previous):
     project = inputs["project"]
@@ -115,6 +126,7 @@ def _build_prompt(inputs, previous):
     frequency = inputs["frequency"]
     tone = inputs["tone"]
     mode = inputs["mode"]
+
     rows = _calendar_target_rows(frequency)
 
     sector = inputs.get("sector", "")
@@ -148,7 +160,7 @@ def _build_prompt(inputs, previous):
             "string (acción #5)"
         ],
         "coherence_score": 0,
-        "whisper": "string (máx 2 líneas, consejo filoso y accionable)",
+        "whisper": "string (máx 2 líneas, consejo accionable)",
         "reality_check": {
             "primary_risk": "string",
             "one_adjustment": "string (una sola corrección que más impacta)"
@@ -193,8 +205,8 @@ def _build_prompt(inputs, previous):
 
     return f"""
 Eres SPRING OS — Direction Engine™.
-Tu trabajo: generar dirección clara y ejecutable (no motivar, no marear).
-Escribí directo, cercano y profesional, sin tono autoritario.
+Tu trabajo: instalar dirección clara y ejecutable (sin hype, sin tono autoritario).
+Idioma: español neutro.
 Prohibido: promesas mágicas, exageraciones, "viral", "sin esfuerzo", "garantizado".
 
 {prev}
@@ -214,11 +226,11 @@ BRIEF PRO (si existe, úsalo; si no, no lo inventes):
 - Restricciones: {constraints}
 
 REGLAS:
-1) "summary_60s" primero: dirección en 60 segundos.
-2) "what_to_do_now": 5 próximos pasos sugeridos, en orden, en tono amable y claro.
-3) "calendar" ~ {rows} entradas (ajustado a {frequency}). No lo infles.
-4) Paleta HEX válida #RRGGBB.
-5) "whisper" máximo 2 líneas, accionable, mentor al oído (sin retar).
+1) summary_60s primero: dirección en 60 segundos.
+2) what_to_do_now: 5 próximos pasos, en orden, claros.
+3) calendar: ~{rows} entradas (ajustado a {frequency}). No lo infles.
+4) palette: HEX válido #RRGGBB.
+5) whisper: máximo 2 líneas, mentor al oído (sin retar).
 6) Devuelve SOLO JSON válido. Sin markdown. Sin texto extra.
 7) exports.calendar_csv y exports.blueprint_json completos.
 
@@ -259,14 +271,6 @@ def _validate(bp):
     if not isinstance(wtdn, list) or len(wtdn) != 5:
         issues.append("what_to_do_now debe tener 5 acciones exactas")
 
-    try:
-        pal = bp["brand_quick_kit"]["visual"]["palette"]
-        for rk in ["primary", "secondary", "accent", "background", "text"]:
-            if not _hex_ok(pal.get(rk)):
-                issues.append(f"palette.{rk} inválido (#RRGGBB)")
-    except Exception:
-        issues.append("brand_quick_kit.visual.palette incompleto")
-
     if not isinstance(bp.get("pillars"), list) or len(bp["pillars"]) != 3:
         issues.append("pillars debe tener 3 elementos exactos")
 
@@ -282,6 +286,14 @@ def _validate(bp):
             issues.append("coherence_score fuera de 0-100")
     except Exception:
         issues.append("coherence_score no numérico")
+
+    try:
+        pal = bp["brand_quick_kit"]["visual"]["palette"]
+        for rk in ["primary", "secondary", "accent", "background", "text"]:
+            if not _hex_ok(pal.get(rk)):
+                issues.append(f"palette.{rk} inválido (#RRGGBB)")
+    except Exception:
+        issues.append("brand_quick_kit.visual.palette incompleto")
 
     ex = bp.get("exports", {})
     if not isinstance(ex, dict) or "calendar_csv" not in ex or "blueprint_json" not in ex:
@@ -301,14 +313,22 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
-    
+
+    loaded_memory = None
+    with st.expander("Avanzado", expanded=False):
+        memories = _list_memories()
+        mem_labels = ["(sin memoria)"] + [k for k, _ in memories]
+        selected_mem = st.selectbox("Memoria", mem_labels, index=0)
+        if selected_mem != "(sin memoria)":
+            for k, data in memories:
+                if k == selected_mem:
+                    loaded_memory = data
+                    break
 
 st.title(APP_TITLE)
 st.caption(APP_TAGLINE)
 
-# -----------------------------
 # STEP 1
-# -----------------------------
 if st.session_state["step"] == 1:
     st.markdown("### Punto de partida")
     st.info("Definamos una prioridad (una sola). Con esto alcanza para darte un plan claro. Si querés, después afinamos.")
@@ -364,9 +384,7 @@ if st.session_state["step"] == 1:
         st.session_state["step"] = 2
         st.rerun()
 
-# -----------------------------
 # STEP 2
-# -----------------------------
 if st.session_state["step"] == 2:
     st.markdown("### Generaremos un plan")
     st.info("Un click y te devuelvo un plan ordenado, listo para usar.")
@@ -405,12 +423,11 @@ if st.session_state["step"] == 2:
 
             prompt = _build_prompt(inputs, loaded_memory)
 
-            # 👉 Capturamos el error REAL en pantalla
             try:
                 with st.spinner("Generando…"):
-                    raw = _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072)
+                    raw = _generate(api_key, prompt, temperature=0.5, max_output_tokens=3072)
             except Exception as e:
-                st.error(f"Error al generar: {type(e).__name__}: {e}")
+                st.error(f"Error al generar ({MODEL_NAME}): {type(e).__name__}: {e}")
                 st.stop()
 
             bp = _safe_json_loads(raw)
@@ -420,7 +437,7 @@ if st.session_state["step"] == 2:
                 fix = _build_fix_prompt(raw, issues)
                 try:
                     with st.spinner("Ajustando (1 pasada)…"):
-                        raw2 = _generate(api_key, model_name, fix, temperature=0.3, max_output_tokens=3072)
+                        raw2 = _generate(api_key, fix, temperature=0.3, max_output_tokens=3072)
                 except Exception as e:
                     st.error(f"Error al corregir: {type(e).__name__}: {e}")
                     st.stop()
@@ -446,9 +463,7 @@ if st.session_state["step"] == 2:
             st.session_state["step"] = 3
             st.rerun()
 
-# -----------------------------
 # STEP 3
-# -----------------------------
 if st.session_state["step"] == 3:
     bp = st.session_state.get("bp")
     if not bp:
