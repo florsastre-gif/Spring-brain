@@ -7,9 +7,10 @@ import streamlit as st
 import google.generativeai as genai
 
 APP_TITLE = "SPRING OS — Direction Engine™"
-APP_TAGLINE = "Elegí. Instalá. Ejecutá."
+APP_TAGLINE = "Un sistema simple para decidir qué hacer este mes."
 MEM_DIR = "spring_memory"
 os.makedirs(MEM_DIR, exist_ok=True)
+
 
 # -----------------------------
 # Helpers
@@ -17,11 +18,13 @@ os.makedirs(MEM_DIR, exist_ok=True)
 def _now_id() -> str:
     return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
+
 def _slugify(text: str) -> str:
     text = (text or "").strip().lower()
     text = re.sub(r"[^a-z0-9áéíóúñü\s-]", "", text)
     text = re.sub(r"\s+", "-", text)
     return text[:60] or "spring"
+
 
 def _safe_json_loads(s: str):
     s = (s or "").strip()
@@ -37,12 +40,15 @@ def _safe_json_loads(s: str):
             pass
     return None
 
+
 def _hex_ok(v: str) -> bool:
     return bool(re.fullmatch(r"#([A-Fa-f0-9]{6})", (v or "").strip()))
+
 
 def _make_model(api_key: str, model_name: str):
     genai.configure(api_key=api_key)
     return genai.GenerativeModel(model_name)
+
 
 def _generate(model, prompt: str, temperature: float = 0.5, max_output_tokens: int = 3072) -> str:
     resp = model.generate_content(
@@ -51,11 +57,13 @@ def _generate(model, prompt: str, temperature: float = 0.5, max_output_tokens: i
     )
     return getattr(resp, "text", "") or ""
 
+
 def _save_memory(key: str, data: dict):
     path = os.path.join(MEM_DIR, f"{key}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return path
+
 
 def _list_memories():
     items = []
@@ -70,27 +78,29 @@ def _list_memories():
                 continue
     return items
 
-def _capacity_label(x: int) -> str:
+
+def _frequency_label(x: int) -> str:
     return {1: "2/semana", 2: "3/semana", 3: "diario"}.get(x, "2/semana")
 
-def _calendar_target_rows(capacity: str) -> int:
-    if capacity == "2/semana":
+
+def _calendar_target_rows(freq: str) -> int:
+    if freq == "2/semana":
         return 8
-    if capacity == "3/semana":
+    if freq == "3/semana":
         return 12
     return 25
+
 
 # -----------------------------
 # Prompt
 # -----------------------------
 def _build_prompt(inputs: dict, previous: dict | None) -> str:
     project = inputs["project"]
-    movement = inputs["movement"]
-    capacity = inputs["capacity"]
-    audience = inputs["audience"]
-    energy = inputs["energy"]
+    priority = inputs["priority"]
+    frequency = inputs["frequency"]
+    tone = inputs["tone"]
     mode = inputs["mode"]
-    rows = _calendar_target_rows(capacity)
+    rows = _calendar_target_rows(frequency)
 
     sector = inputs.get("sector", "")
     offer = inputs.get("offer", "")
@@ -168,18 +178,17 @@ def _build_prompt(inputs: dict, previous: dict | None) -> str:
 
     return f"""
 Eres SPRING OS — Direction Engine™.
-Tu trabajo: instalar dirección clara y ejecutable (no motivar, no marear).
-Escribí como Flor: directo, cálido con autoridad, rioplatense elegante.
+Tu trabajo: generar dirección clara y ejecutable (no motivar, no marear).
+Escribí directo, cercano y profesional, sin tono autoritario.
 Prohibido: promesas mágicas, exageraciones, "viral", "sin esfuerzo", "garantizado".
 
 {prev}
 
 ENTRADA:
 - Proyecto: {project}
-- Prioridad del mes: {movement}
-- Capacidad real: {capacity}
-- Nivel del público: {audience}
-- Energía: {energy}
+- Prioridad del mes (una): {priority}
+- Frecuencia real de posteo: {frequency}
+- Tono de mensajes: {tone}
 - Modo: {mode}
 
 BRIEF PRO (si existe, úsalo; si no, no lo inventes):
@@ -191,16 +200,17 @@ BRIEF PRO (si existe, úsalo; si no, no lo inventes):
 
 REGLAS:
 1) "summary_60s" primero: dirección en 60 segundos.
-2) "what_to_do_now": 5 acciones concretas, en orden, para que el usuario no se pierda.
-3) "calendar" ~ {rows} entradas (ajustado a {capacity}). No lo infles.
+2) "what_to_do_now": 5 próximos pasos sugeridos, en orden, en tono amable y claro.
+3) "calendar" ~ {rows} entradas (ajustado a {frequency}). No lo infles.
 4) Paleta HEX válida #RRGGBB.
-5) "whisper" máximo 2 líneas.
+5) "whisper" máximo 2 líneas, accionable, mentor al oído (sin retar).
 6) Devuelve SOLO JSON válido. Sin markdown. Sin texto extra.
 7) exports.calendar_csv y exports.blueprint_json completos.
 
 ESQUEMA:
 {json.dumps(schema, ensure_ascii=False)}
 """.strip()
+
 
 def _build_fix_prompt(model_output: str, issues: list) -> str:
     return f"""
@@ -215,13 +225,17 @@ Salida anterior:
 Recordá: HEX #RRGGBB, 3 pilares exactos, whisper corto, calendar ajustado, what_to_do_now (5 acciones).
 """.strip()
 
+
 def _validate(bp: dict) -> list:
     issues = []
     if not isinstance(bp, dict):
         return ["No es JSON objeto."]
 
-    required = ["project_name","summary_60s","what_to_do_now","coherence_score","whisper","reality_check",
-                "brand_quick_kit","pillars","weekly_plan","calendar","starter_pack","exports"]
+    required = [
+        "project_name", "summary_60s", "what_to_do_now", "coherence_score", "whisper",
+        "reality_check", "brand_quick_kit", "pillars", "weekly_plan", "calendar",
+        "starter_pack", "exports"
+    ]
     for k in required:
         if k not in bp:
             issues.append(f"Falta: {k}")
@@ -232,7 +246,7 @@ def _validate(bp: dict) -> list:
 
     try:
         pal = bp["brand_quick_kit"]["visual"]["palette"]
-        for rk in ["primary","secondary","accent","background","text"]:
+        for rk in ["primary", "secondary", "accent", "background", "text"]:
             if not _hex_ok(pal.get(rk)):
                 issues.append(f"palette.{rk} inválido (#RRGGBB)")
     except Exception:
@@ -259,8 +273,9 @@ def _validate(bp: dict) -> list:
 
     return issues
 
+
 # -----------------------------
-# UI (Brújula)
+# UI
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, page_icon="🧠", layout="centered")
 
@@ -287,33 +302,46 @@ with st.sidebar:
 st.title(APP_TITLE)
 st.caption(APP_TAGLINE)
 
-steps = {1: "1) Elegí", 2: "2) Instalá", 3: "3) Ejecutá"}
-st.markdown(f"**Paso actual:** {steps.get(st.session_state['step'])}")
-
+# -----------------------------
 # STEP 1
+# -----------------------------
 if st.session_state["step"] == 1:
-    st.markdown("### Arrancá por acá")
-    st.info("Elegí una prioridad. Calibrá capacidad. Listo. No te pido más para darte dirección.")
+    st.markdown("### Punto de partida")
+    st.info("Definamos una prioridad (una sola). Con esto alcanza para darte un plan claro. Si querés, después afinamos.")
 
-    # ✅ reemplazo de segmented_control por radio (compatible)
     mode = st.radio("Modo", ["Rápido", "Pro"], index=0, horizontal=True)
     st.session_state["mode"] = mode
 
     c1, c2 = st.columns(2)
     with c1:
         project = st.text_input("Proyecto", value="SPRING")
-        movement = st.selectbox("Prioridad del mes (una)", ["Venta", "Autoridad", "Validación", "Comunidad"], index=0)
-        audience = st.radio("Nivel del público", ["Básico","Intermedio","Técnico"], index=0, horizontal=True)
+        priority = st.selectbox(
+            "Prioridad del mes (una)",
+            ["Venta", "Promo puntual", "Branding (marca)", "Comunidad (interacción y vínculo)"],
+            index=0,
+        )
     with c2:
-        cap_int = st.slider("Capacidad real", 1, 3, 1, help="1: 2/semana · 2: 3/semana · 3: diario")
-        capacity = _capacity_label(cap_int)
-        energy = st.selectbox("Energía", ["Precisión","Sofisticación","Cercanía","Ambición","Minimal"], index=0)
+        freq_int = st.slider("Frecuencia real de posteo", 1, 3, 1, help="1: 2/semana · 2: 3/semana · 3: diario")
+        frequency = _frequency_label(freq_int)
+
+    st.caption("Tip: si dudás, elegí la opción más baja. Cumplir > fantasear.")
+
+    tone = st.selectbox(
+        "Tono de mensajes",
+        [
+            "Estratégico y claro",
+            "Cercano y didáctico",
+            "Sofisticado y minimalista",
+            "Directo y ejecutivo",
+            "Inspirador pero realista",
+        ],
+        index=0,
+    )
 
     st.session_state["project"] = project.strip()
-    st.session_state["movement"] = movement
-    st.session_state["audience"] = audience
-    st.session_state["capacity"] = capacity
-    st.session_state["energy"] = energy
+    st.session_state["priority"] = priority
+    st.session_state["frequency"] = frequency
+    st.session_state["tone"] = tone
 
     if mode == "Pro":
         with st.expander("Brief Pro (opcional)", expanded=False):
@@ -329,21 +357,19 @@ if st.session_state["step"] == 1:
         st.session_state["anti"] = ""
         st.session_state["constraints"] = ""
 
-    colA, colB = st.columns(2)
-    with colA:
-        if st.button("Siguiente →", use_container_width=True):
-            st.session_state["step"] = 2
-            st.rerun()
-    with colB:
-        st.caption("Tip: si dudás, poné capacidad baja. Cumplir > fantasear.")
+    if st.button("Siguiente →", use_container_width=True):
+        st.session_state["step"] = 2
+        st.rerun()
 
+# -----------------------------
 # STEP 2
+# -----------------------------
 if st.session_state["step"] == 2:
-    st.markdown("### Instalación")
-    st.info("Un click. Te devuelvo orden.")
+    st.markdown("### Generaremos un plan")
+    st.info("Un click y te devuelvo un plan ordenado, listo para usar.")
 
     st.write(f"**Proyecto:** {st.session_state['project']}")
-    st.write(f"**Prioridad:** {st.session_state['movement']} · **Capacidad:** {st.session_state['capacity']} · **Público:** {st.session_state['audience']}")
+    st.write(f"**Prioridad:** {st.session_state['priority']} · **Frecuencia:** {st.session_state['frequency']} · **Tono:** {st.session_state['tone']}")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -351,29 +377,28 @@ if st.session_state["step"] == 2:
             st.session_state["step"] = 1
             st.rerun()
     with c2:
-        if st.button("INSTALAR DIRECCIÓN", type="primary", use_container_width=True):
+        if st.button("Generar plan", type="primary", use_container_width=True):
             if not api_key:
                 st.error("Te falta la API key.")
                 st.stop()
 
             inputs = {
                 "project": st.session_state["project"],
-                "movement": st.session_state["movement"],
-                "capacity": st.session_state["capacity"],
-                "audience": st.session_state["audience"],
-                "energy": st.session_state["energy"],
+                "priority": st.session_state["priority"],
+                "frequency": st.session_state["frequency"],
+                "tone": st.session_state["tone"],
                 "mode": st.session_state["mode"],
-                "sector": st.session_state["sector"],
-                "offer": st.session_state["offer"],
-                "target": st.session_state["target"],
-                "anti": st.session_state["anti"],
-                "constraints": st.session_state["constraints"],
+                "sector": st.session_state.get("sector", ""),
+                "offer": st.session_state.get("offer", ""),
+                "target": st.session_state.get("target", ""),
+                "anti": st.session_state.get("anti", ""),
+                "constraints": st.session_state.get("constraints", ""),
             }
 
             model = _make_model(api_key, model_name)
             prompt = _build_prompt(inputs, loaded_memory)
 
-            with st.spinner("Instalando dirección…"):
+            with st.spinner("Generando…"):
                 raw = _generate(model, prompt, temperature=0.5, max_output_tokens=3072)
 
             bp = _safe_json_loads(raw)
@@ -397,21 +422,23 @@ if st.session_state["step"] == 2:
             st.session_state["step"] = 3
             st.rerun()
 
+# -----------------------------
 # STEP 3
+# -----------------------------
 if st.session_state["step"] == 3:
     bp = st.session_state.get("bp")
     if not bp:
         st.session_state["step"] = 1
         st.rerun()
 
-    st.markdown("### Ejecutá (sin perderte)")
+    st.markdown("### Tu plan listo (sin enredos)")
     s = bp.get("summary_60s", {})
     st.success(s.get("direction", ""))
     st.caption(f"North Star: {s.get('north_star','')}")
     st.info(f"**Whisper:** {bp.get('whisper','')}")
     st.metric("Coherence Score", f"{bp.get('coherence_score')}%")
 
-    st.markdown("#### Tu brújula (en orden)")
+    st.markdown("#### Siguiente mejor paso (en orden)")
     for i, action in enumerate(bp.get("what_to_do_now", []), start=1):
         st.write(f"{i}. {action}")
 
@@ -419,8 +446,8 @@ if st.session_state["step"] == 3:
     posts = (bp.get("starter_pack", {}).get("5_posts") or [])[:5]
     for p in posts:
         st.write(f"**{p.get('title','')}**")
-        st.write(p.get("copy",""))
-        st.caption(f"CTA: {p.get('cta','')}")
+        st.write(p.get("copy", ""))
+        st.caption(f"CTA: {p.get('cta', '')}")
 
     with st.expander("Calendario (detalle)", expanded=False):
         st.dataframe(bp.get("calendar", []), use_container_width=True)
@@ -436,7 +463,7 @@ if st.session_state["step"] == 3:
             st.session_state["step"] = 2
             st.rerun()
     with c:
-        mem_key = f"{_slugify(bp.get('project_name','spring'))}_{_now_id()}"
+        mem_key = f"{_slugify(bp.get('project_name', 'spring'))}_{_now_id()}"
         if st.button("Guardar memoria", use_container_width=True):
             _save_memory(mem_key, bp)
             st.success(f"Guardado: {mem_key}")
@@ -451,7 +478,7 @@ if st.session_state["step"] == 3:
         )
         st.download_button(
             "Descargar calendar.csv",
-            data=(bp["exports"].get("calendar_csv","") or "").encode("utf-8"),
+            data=(bp["exports"].get("calendar_csv", "") or "").encode("utf-8"),
             file_name="calendar.csv",
             mime="text/csv",
             use_container_width=True,
