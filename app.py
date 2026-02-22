@@ -96,60 +96,20 @@ def _format_calendar_csv(rows):
     return "\n".join(out)
 
 
-# -----------------------------
-# Gemini (Direct call) — robust model resolution
-# -----------------------------
-def _model_candidates(model_name):
-    base = (model_name or "").strip()
-    if not base:
-        base = "gemini-2.5-flash"
-
-    candidates = []
-
-    def add(x):
-        x = (x or "").strip()
-        if x and x not in candidates:
-            candidates.append(x)
-
-    # as-is
-    add(base)
-
-    # with models/ prefix
-    if not base.startswith("models/"):
-        add(f"models/{base}")
-
-    # add -latest variants if missing
-    plain = base.replace("models/", "")
-    if "latest" not in plain:
-        add(f"{plain}-latest")
-        add(f"models/{plain}-latest")
-
-    # if already -latest, also try non-latest
-    if plain.endswith("-latest"):
-        base_plain = plain.replace("-latest", "")
-        add(base_plain)
-        add(f"models/{base_plain}")
-
-    return candidates
-
-
-def _generate(api_key, model_name, prompt, temperature=0.5, max_output_tokens=3072):
+def _generate(api_key, prompt, temperature=0.5, max_output_tokens=3072):
     genai.configure(api_key=api_key)
-    last_error = None
 
-    for name in _model_candidates(model_name):
-        try:
-            model = genai.GenerativeModel(name)
-            resp = model.generate_content(
-                prompt,
-                generation_config={"temperature": temperature, "max_output_tokens": max_output_tokens},
-            )
-            return getattr(resp, "text", "") or ""
-        except Exception as e:
-            last_error = e
-            continue
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
-    raise last_error
+    response = model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        },
+    )
+
+    return response.text
 
 
 # -----------------------------
@@ -347,6 +307,11 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.markdown("### Acceso")
     api_key = st.text_input("Google API Key", type="password", placeholder="Pegá tu key acá")
+    model_name = st.selectbox(
+        "Modelo",
+        ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"],
+        index=0,
+    )
 
     loaded_memory = None
     with st.expander("Avanzado", expanded=False):
