@@ -11,9 +11,9 @@ from google.genai import types
 # ----------------------------
 # 1. Configuración y Modelo
 # ----------------------------
-# Usamos Gemini 1.5 Flash por ser el modelo más estable para el Tier Gratuito
+# Cambiamos a 'gemini-2.0-flash' que es la versión estable para generación multimedia
 APP_TITLE = "SPRING OS — Visual Pack™"
-MODEL_IMAGE = "gemini-1.5-flash" 
+MODEL_IMAGE = "gemini-2.0-flash" 
 
 # ----------------------------
 # 2. Helpers Técnicos
@@ -32,12 +32,11 @@ def _zip_images(images: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 # ----------------------------
-# 3. Motor de Generación con Backoff (Solución Error 429)
+# 3. Motor de Generación con Resiliencia
 # ----------------------------
 def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=2) -> bytes:
     """
-    Intenta generar la imagen. Si recibe el error 429 de tus capturas, 
-    espera 30 segundos y reintenta.
+    Gestiona la generación con soporte para reintentos ante cuota agotada.
     """
     client = genai.Client(api_key=api_key)
     for attempt in range(retries + 1):
@@ -49,8 +48,9 @@ def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=
                     image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
                 ),
             )
+            
             if not resp.candidates or not resp.candidates[0].content.parts:
-                raise RuntimeError("La IA bloqueó la imagen por filtros de seguridad.")
+                raise RuntimeError("La IA no devolvió contenido visual válido.")
 
             for part in resp.candidates[0].content.parts:
                 img = part.as_image()
@@ -59,14 +59,14 @@ def _generate_image_bytes(api_key: str, prompt: str, aspect_ratio: str, retries=
                 return buf.getvalue()
                 
         except Exception as e:
-            # Captura el error de cuota excedida de tus capturas
+            # Manejo de error de cuota 429
             if "429" in str(e) and attempt < retries:
                 wait_time = 30 
-                st.warning(f"Límite alcanzado. Esperando {wait_time}s para reintentar (Intento {attempt+1})...")
+                st.warning(f"Límite alcanzado. Esperando {wait_time}s para reintentar...")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise RuntimeError("No se pudo completar la generación. Revisa tu cuota diaria en Google AI Studio.")
+    raise RuntimeError("Error de conexión o cuota con Google AI Studio.")
 
 # ----------------------------
 # 4. Interfaz de Usuario (UI)
@@ -80,7 +80,6 @@ if "step" not in st.session_state:
 with st.sidebar:
     st.header("🔑 Configuración")
     api_key = st.text_input("Google API Key", type="password")
-    st.caption("Usa tu key de Google AI Studio.")
 
 # PASO 1: DIRECCIÓN
 if st.session_state.step == 1:
@@ -93,10 +92,10 @@ if st.session_state.step == 1:
         st.session_state.step = 2
         st.rerun()
 
-# PASO 2: CONFIGURACIÓN LIMITADA (Para evitar Error 429)
+# PASO 2: CONFIGURACIÓN (Límite de 3 imágenes)
 if st.session_state.step == 2:
     st.subheader("2) Configuración del Pack")
-    st.info("⚠️ Para asegurar el éxito en el nivel gratuito, el máximo es de 3 imágenes.")
+    st.info("Máximo 3 imágenes para asegurar estabilidad en el tier gratuito.")
     
     num_imgs = st.slider("Cantidad de variaciones", 1, 3, 1)
     fmt = st.selectbox("Formato", ["Post (1:1)", "Story (9:16)"])
@@ -113,7 +112,7 @@ if st.session_state.step == 2:
             st.session_state.step = 3
             st.rerun()
 
-# PASO 3: GENERACIÓN Y DESCARGA
+# PASO 3: GENERACIÓN FINAL
 if st.session_state.step == 3:
     st.subheader("3) Tu Visual Pack™")
     data = st.session_state.data
@@ -130,21 +129,20 @@ if st.session_state.step == 3:
             for i in range(data["num_imgs"]):
                 try:
                     aspect = "1:1" if "1:1" in data["fmt"] else "9:16"
-                    prompt = f"Professional {data['style']} brand visual for {data['project']}. High quality, cinematic lighting."
+                    prompt = f"Professional {data['style']} brand visual for {data['project']}. High quality."
                     
                     img_bytes = _generate_image_bytes(api_key, prompt, aspect)
                     outputs.append((f"v{i+1}_{_slug(data['project'])}.png", img_bytes))
                     
                     progress_bar.progress((i + 1) / data["num_imgs"])
                     
-                    # PAUSA DE SEGURIDAD: 10s entre imágenes para no saturar la cuota
+                    # Pausa de seguridad de 10s para proteger la cuota
                     if i < data["num_imgs"] - 1:
-                        st.info(f"Imagen {i+1} completada. Pausa de 10s para proteger tu cuota...")
+                        st.info(f"Imagen {i+1} completada. Pausa de 10s por seguridad...")
                         time.sleep(10) 
                         
                 except Exception as e:
                     st.error(f"Fallo técnico: {e}")
-                    st.info("Tip: Si el error 429 persiste, espera 5 minutos o usa otra API Key.")
                     break
         
         st.session_state.outputs = outputs
